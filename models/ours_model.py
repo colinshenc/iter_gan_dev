@@ -18,8 +18,8 @@ You need to implement the following functions:
 import torch
 from .base_model import BaseModel
 from . import networks
-
-
+import sys
+import random
 class OursModel(BaseModel):
     '''Our model'''
     @staticmethod
@@ -33,9 +33,11 @@ class OursModel(BaseModel):
         Returns:
             the modified parser.
         """
-        parser.set_defaults(dataset_mode='aligned', norm='batch', netG='unet_256')  # You can rewrite default values for this model. For example, this model usually uses aligned dataset as its dataset.
+        parser.set_defaults(dataset_mode='aligned', norm='batch', netG='resnet_9blocks')  # You can rewrite default values for this model. For example, this model usually uses aligned dataset as its dataset.
         if is_train:
+            parser.set_defaults(pool_size=0, gan_mode='vanilla')
             parser.add_argument('--lambda_L1', type=float, default=100.0, help='weight for the regression loss')  # You can define new arguments for this model.
+            parser.add_argument('--lambda_C', type=float, default=2.0, help='weight for inter_iter loss.')
 
         return parser
 
@@ -51,9 +53,9 @@ class OursModel(BaseModel):
         """
         BaseModel.__init__(self, opt)  # call the initialization method of BaseModel
         # specify the training losses you want to print out. The program will call base_model.get_current_losses to plot the losses to the console and save them to the disk.
-        self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake']
+        self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake', 'inter_iter_', 'progress_']
         # specify the images you want to save and display. The program will call base_model.get_current_visuals to save and display these images.
-        self.visual_names = ['real_A', 'fake_B', 'real_B']
+        self.visual_names = ['real_A', 'fake_B', 'real_B',]#'D_maps']
         # specify the models you want to save to the disk. The program will call base_model.save_networks and base_model.load_networks to save and load networks.
         # you can use opt.isTrain to specify different behaviors for training and test. For example, some networks will not be used during test, and you don't need to load them.
         if self.isTrain:
@@ -70,6 +72,7 @@ class OursModel(BaseModel):
             # define your loss functions. You can use losses provided by torch.nn such as torch.nn.L1Loss.
             # We also provide a GANLoss class "networks.GANLoss". self.criterionGAN = networks.GANLoss().to(self.device)
             self.criterionL1 = torch.nn.L1Loss()
+            self.inter_iter = torch.nn.L1Loss()
             # define and initialize optimizers. You can define one optimizer for each network.
             # If two networks are updated at the same time, you can use itertools.chain to group them. See cycle_gan_model.py for an example.
             self.optimizer_G = torch.optim.Adam(self.netG.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
@@ -78,6 +81,7 @@ class OursModel(BaseModel):
             self.optimizers.append(self.optimizer_D)
         # if self.isTrain:
         self.num_iter = opt.num_iter
+        self.fake_A_ = None
         # Our program will automatically call <model.setup> to define schedulers, load networks, and print networks
 
     def set_input(self, input):
@@ -95,16 +99,22 @@ class OursModel(BaseModel):
         """Run forward pass. This will be called by both functions <optimize_parameters> and <test>."""
         # if self.isTrain:
         assert self.num_iter > 0
+        # if self.fake_A_ is None:
+        self.fake_A_ = torch.zeros_like(self.real_A)
+            # print('using zero as fake A...once')
+        # fake_B_ = torch.zeros_like(self.real_A)
+
         if self.isTrain:
             if iter == 0:
-                self.fake_B = []
-                in_ = torch.cat([self.real_A, self.real_A], 1)
+                # print(self.real_A.shape)
+                # print(self.fake_A_.shape)
+                in_ = torch.cat([self.real_A, self.fake_A_], 1)
             else:
                 in_ = torch.cat([self.real_A, self.fake_B[-1]], 1)
             self.fake_B.append(self.netG(in_))  # generate output image given the input data_A
         else:
             if iter == 0:
-                in_ = torch.cat([self.real_A, self.real_A], 1)  # G(A)
+                in_ = torch.cat([self.real_A, self.fake_A_], 1)  # G(A)
             else:
                 in_ = torch.cat([self.real_A, self.fake_B], 1)
             self.fake_B = self.netG(in_)
@@ -127,12 +137,23 @@ class OursModel(BaseModel):
         """Calculate GAN and L1 loss for the generator"""
         # First, G(A) should fake the discriminator
         fake_AB = torch.cat((self.real_A, self.fake_B[-1]), 1)
-        pred_fake = self.netD(fake_AB)
-        self.loss_G_GAN = self.criterionGAN(pred_fake, True)
+        self.D_maps.append(self.netD(fake_AB))
+        self.loss_G_GAN = self.criterionGAN(self.D_maps[-1], True)
         # Second, G(A) = B
         self.loss_G_L1 = self.criterionL1(self.fake_B[-1], self.real_B) * self.opt.lambda_L1
         # combine loss and calculate gradients
-        self.loss_G = self.loss_G_GAN + self.loss_G_L1
+
+        self.loss_inter_iter = 0.0
+        self.loss_progress = 0.0
+        if iter == 1 or iter == 2:
+            self.loss_inter_iter = self.opt.lambda_C * self.inter_iter(self.fake_B[-1], self.fake_B[-2])
+            self.loss_progress = 2 * torch.max(torch.zeros_like(self.D_maps[-1]).to(self.device),  -5e-4 + self.D_maps[-2]-self.D_maps[-1]).mean()
+            'for logging'
+            self.loss_progress_ = self.loss_progress.item()
+            self.loss_inter_iter_ = self.loss_inter_iter.item()
+        # self.loss_inter_iter_ = 0.0
+        # self.loss_progress_ = 0.0
+        self.loss_G = self.loss_G_GAN + self.loss_G_L1 + self.loss_inter_iter + self.loss_progress
         # print('real a leaf {} requires_grad {}'.format(self.real_A.is_leaf, self.real_A.grad))
         # print('fake b leaf {} requires_grad {}'.format(self.fake_B[-1].is_leaf, self.fake_B[-1].grad))
         # print('real b leaf111 {} requires_grad111 {}'.format(self.real_B.is_leaf, self.real_B.grad))
@@ -143,7 +164,7 @@ class OursModel(BaseModel):
         # self.fake_B[-1] = self.fake_B[-1].detach()
         # self.fake_B[-1].detach_()
         # self.fake_B[-1].retain_grad()
-        self.fake_B[-1] = self.fake_B[-1].detach()#.clone()
+        # self.fake_B[-1] = self.fake_B[-1].detach()#.clone()
         # print('fake b 111leaf {} 111requires_grad {}'.format(self.fake_B[-1].is_leaf, self.fake_B[-1].requires_grad))
 
         # if not iter == 0:
@@ -151,6 +172,8 @@ class OursModel(BaseModel):
 
         # self.real_A = self.real_A.detach()
     def optimize_parameters(self):
+        self.fake_B = []
+        self.D_maps =[]
         for iter in range(self.num_iter):
             self.forward(iter)  # compute fake images: G(A)
             # update D
@@ -176,11 +199,17 @@ class OursModel(BaseModel):
             # print('G grad 15 {}'.format(self.print_grad(self.netG)))
             # print('D grad 15 {}'.format(self.print_grad(self.netD)))
             self.optimizer_G.step()  # udpate G's weights
+            self.fake_B[-1] = self.fake_B[-1].detach()
+            self.D_maps[-1] = self.D_maps[-1].detach()
+            # self.fake_A_ = random.choice(self.fake_B).clone()
+        # sys.exit()
         # self.fake_B = None
     def compute_visuals(self):
         """Calculate additional output images for visdom and HTML visualization"""
         if self.isTrain:
             self.fake_B = torch.cat([_ for _ in self.fake_B], 2)
+            self.D_maps = torch.cat([_ for _ in self.D_maps], 2)
+
         # print('======>fake img size {}'.format(self.fake_B.shape))
     def test(self):
         """Forward function used in test time.
