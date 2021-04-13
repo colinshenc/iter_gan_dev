@@ -32,9 +32,13 @@ from data import create_dataset
 from models import create_model
 from util.visualizer import save_images
 from util import html
+import torch
+torch.backends.cudnn.benchmark = True
 
 
 if __name__ == '__main__':
+    # torch.manual_seed(42)
+    # torch.cuda.manual_seed(42)
     opt = TestOptions().parse()  # get test options
     # hard-code some parameters for test
     opt.num_threads = 0   # test code only supports num_threads = 1
@@ -47,7 +51,7 @@ if __name__ == '__main__':
     # model.setup(opt)               # regular setup: load and print networks; create schedulers
     # create a website
     if 'ours' in opt.model:
-        for _ in range(1,13):
+        for _ in range(1,10):
             opt.num_iter = _
             model = create_model(opt)  # create a model given opt.model and other options
             model.setup(opt)  # regular setup: load and print networks; create schedulers
@@ -69,7 +73,7 @@ if __name__ == '__main__':
                 model.test()           # run inference
                 visuals = model.get_current_visuals()  # get image results
                 img_path = model.get_image_paths()     # get image paths
-                if i % 5 == 0:  # save images to an HTML file
+                if i % 10 == 0:  # save images to an HTML file
                     print('processing (%04d)-th image... %s' % (i, img_path))
                 save_images(webpage, visuals, img_path, aspect_ratio=opt.aspect_ratio, width=opt.display_winsize)
             webpage.save()  # save the HTML
@@ -95,7 +99,7 @@ if __name__ == '__main__':
             model.test()  # run inference
             visuals = model.get_current_visuals()  # get image results
             img_path = model.get_image_paths()  # get image paths
-            if i % 5 == 0:  # save images to an HTML file
+            if i % 10 == 0:  # save images to an HTML file
                 print('processing (%04d)-th image... %s' % (i, img_path))
             save_images(webpage, visuals, img_path, aspect_ratio=opt.aspect_ratio, width=opt.display_winsize)
         webpage.save()  # save the HTML

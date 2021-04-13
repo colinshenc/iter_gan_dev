@@ -141,6 +141,10 @@ class BaseModel(ABC):
         errors_ret = OrderedDict()
         for name in self.loss_names:
             if isinstance(name, str):
+                '''We make a design choice here; if inter-iter loss in the last iteration is not used, then we do not report it.'''
+                if 'inter_iter' in name:
+                    if float(getattr(self, 'loss_' + name)) == 0.0:
+                        continue
                 errors_ret[name] = float(getattr(self, 'loss_' + name))  # float(...) works for both scalar tensor and float number
         return errors_ret
 
@@ -195,7 +199,10 @@ class BaseModel(ABC):
                 state_dict = torch.load(load_path, map_location=str(self.device))
                 if hasattr(state_dict, '_metadata'):
                     del state_dict._metadata
-
+                # print(net)
+                # print('\n\n\n')
+                # print(list(state_dict.keys()))
+                # print('\n\n\n')
                 # patch InstanceNorm checkpoints prior to 0.4
                 for key in list(state_dict.keys()):  # need to copy keys here because we mutate in loop
                     self.__patch_instance_norm_state_dict(state_dict, net, key.split('.'))

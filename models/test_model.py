@@ -49,6 +49,7 @@ class TestModel(BaseModel):
         # please see <BaseModel.load_networks>
         setattr(self, 'netG' + opt.model_suffix, self.netG)  # store netG in self.
 
+
     def set_input(self, input):
         """Unpack input data from the dataloader and perform necessary pre-processing steps.
 
@@ -62,8 +63,10 @@ class TestModel(BaseModel):
 
     def forward(self):
         """Run forward pass."""
+
         self.fake = self.netG(self.real)  # G(real)
 
     def optimize_parameters(self):
         """No optimization for test model."""
         pass
+
